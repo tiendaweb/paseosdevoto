@@ -1,21 +1,35 @@
 <?php
 session_start();
-if (!is_dir(__DIR__ . '/data')) mkdir(__DIR__ . '/data', 0775, true);
-$pdo = new PDO('sqlite:' . __DIR__ . '/data/devoto.sqlite');
-$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-$pdo->exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password_hash TEXT, display_name TEXT, created_at TEXT, updated_at TEXT)");
-$pdo->exec("CREATE TABLE IF NOT EXISTS dogs (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, dueno TEXT, telefono TEXT, telefono_alt TEXT, prioridad_contacto TEXT, vacunas TEXT, salud TEXT, comida TEXT, zonas_json TEXT, precios_json TEXT, created_at TEXT, updated_at TEXT)");
-$pdo->exec("CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, dog_id INTEGER, fecha_iso TEXT, servicio TEXT, zona TEXT, horas INTEGER, dias INTEGER, tipo_pago TEXT, tarifa_unitaria REAL, descuento_pct REAL, total REAL, estado_cobro TEXT DEFAULT 'pendiente', notes TEXT, detalle_json TEXT, created_at TEXT, paid_at TEXT)");
-$pdo->exec("CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, dog_id INTEGER, due_at_iso TEXT, message TEXT, status TEXT, created_at TEXT, done_at TEXT)");
-$pdo->exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)");
-$usersCount=(int)$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
-$dogsCount=(int)$pdo->query('SELECT COUNT(*) FROM dogs')->fetchColumn();
-if($dogsCount===0){
-  $nowDefault=gmdate('c');
-  $preciosDefault=json_encode(['hora'=>'9000','combos'=>'','mensual'=>'','personalizado'=>''],JSON_UNESCAPED_UNICODE);
-  $pdo->prepare('INSERT INTO dogs(nombre,dueno,telefono,telefono_alt,prioridad_contacto,vacunas,salud,comida,zonas_json,precios_json,raza,raza_otra,foto_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      ->execute(['Mancha','Fernando','Sin teléfono','','Primero dueño/a','No informado','Sin notas','Sin indicaciones','[]',$preciosDefault,'Otro','','',$nowDefault,$nowDefault]);
+try {
+  $dataDir = __DIR__ . '/data';
+  if (!is_dir($dataDir) && !mkdir($dataDir, 0775, true) && !is_dir($dataDir)) {
+    throw new RuntimeException('No se pudo crear la carpeta de datos.');
+  }
+  if (!is_writable($dataDir)) {
+    throw new RuntimeException('La carpeta de datos no tiene permisos de escritura.');
+  }
+  $pdo = new PDO('sqlite:' . $dataDir . '/devoto.sqlite');
+  $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+  $pdo->exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password_hash TEXT, display_name TEXT, created_at TEXT, updated_at TEXT)");
+  $pdo->exec("CREATE TABLE IF NOT EXISTS dogs (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, dueno TEXT, telefono TEXT, telefono_alt TEXT, prioridad_contacto TEXT, vacunas TEXT, salud TEXT, comida TEXT, zonas_json TEXT, precios_json TEXT, raza TEXT DEFAULT 'Otro', raza_otra TEXT DEFAULT '', foto_url TEXT DEFAULT '', created_at TEXT, updated_at TEXT)");
+  $pdo->exec("CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, dog_id INTEGER, fecha_iso TEXT, servicio TEXT, zona TEXT, horas INTEGER, dias INTEGER, tipo_pago TEXT, tarifa_unitaria REAL, descuento_pct REAL, total REAL, estado_cobro TEXT DEFAULT 'pendiente', notes TEXT, detalle_json TEXT, created_at TEXT, paid_at TEXT)");
+  $pdo->exec("CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, dog_id INTEGER, due_at_iso TEXT, message TEXT, status TEXT, created_at TEXT, done_at TEXT)");
+  $pdo->exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)");
+  $usersCount=(int)$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
+} catch (Throwable $bootError) {
+  $isApi = isset($_GET['api']);
+  if ($isApi) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['ok'=>false,'message'=>'Error de inicialización del servidor.','details'=>$bootError->getMessage()], JSON_UNESCAPED_UNICODE);
+  } else {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo 'Error de inicialización del servidor: ' . $bootError->getMessage();
+  }
+  exit;
 }
+
 
 function out($p,$s=200){http_response_code($s);header('Content-Type: application/json; charset=utf-8');echo json_encode($p,JSON_UNESCAPED_UNICODE);exit;}
 function in(){ $d=json_decode(file_get_contents('php://input')?:'[]',true); return is_array($d)?$d:[]; }
@@ -29,6 +43,13 @@ if(!in_array('precios_json',$names,true))$pdo->exec("ALTER TABLE dogs ADD COLUMN
 if(!in_array('raza',$names,true))$pdo->exec("ALTER TABLE dogs ADD COLUMN raza TEXT DEFAULT 'Otro'");
 if(!in_array('raza_otra',$names,true))$pdo->exec("ALTER TABLE dogs ADD COLUMN raza_otra TEXT DEFAULT ''");
 if(!in_array('foto_url',$names,true))$pdo->exec("ALTER TABLE dogs ADD COLUMN foto_url TEXT DEFAULT ''");
+$dogsCount=(int)$pdo->query('SELECT COUNT(*) FROM dogs')->fetchColumn();
+if($dogsCount===0){
+  $nowDefault=gmdate('c');
+  $preciosDefault=json_encode(['hora'=>'9000','combos'=>'','mensual'=>'','personalizado'=>''],JSON_UNESCAPED_UNICODE);
+  $pdo->prepare('INSERT INTO dogs(nombre,dueno,telefono,telefono_alt,prioridad_contacto,vacunas,salud,comida,zonas_json,precios_json,raza,raza_otra,foto_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      ->execute(['Mancha','Fernando','Sin teléfono','','Primero dueño/a','No informado','Sin notas','Sin indicaciones','[]',$preciosDefault,'Otro','','',$nowDefault,$nowDefault]);
+}
 $jobCols=$pdo->query("PRAGMA table_info(jobs)")->fetchAll(PDO::FETCH_ASSOC);
 $jobNames=array_map(fn($c)=>$c['name'],$jobCols);
 if(!in_array('detalle_json',$jobNames,true))$pdo->exec("ALTER TABLE jobs ADD COLUMN detalle_json TEXT DEFAULT '{}'");
